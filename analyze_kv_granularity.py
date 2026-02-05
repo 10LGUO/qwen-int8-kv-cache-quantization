@@ -120,10 +120,19 @@ def main():
             inputs = tokenizer(prompt, return_tensors="pt").to(device)
             out = model(**inputs, use_cache=True)
             past = out.past_key_values
-            if hasattr(past, "to_legacy_cache"):
-                past = past.to_legacy_cache()  # DynamicCache (transformers>=4.48) -> tuple of (key, value) per layer
+            # past_key_values API has churned across transformers versions:
+            # older versions -> plain tuple of (key, value) per layer, subscriptable directly.
+            # transformers>=4.48ish -> DynamicCache with .key_cache/.value_cache lists.
+            # some versions additionally expose to_legacy_cache() to convert back to a tuple.
+            if hasattr(past, "key_cache") and hasattr(past, "value_cache"):
+                get_kv = lambda l: (past.key_cache[l], past.value_cache[l])
+            elif hasattr(past, "to_legacy_cache"):
+                legacy = past.to_legacy_cache()
+                get_kv = lambda l: legacy[l]
+            else:
+                get_kv = lambda l: past[l]
             for l in layer_ids:
-                k, v = past[l]  # [batch=1, num_kv_heads, seq_len, head_dim]
+                k, v = get_kv(l)  # [batch=1, num_kv_heads, seq_len, head_dim]
                 per_layer_k[l].append(k[0].transpose(0, 1).cpu())  # -> [seq_len, num_kv_heads, head_dim]
                 per_layer_v[l].append(v[0].transpose(0, 1).cpu())
 
