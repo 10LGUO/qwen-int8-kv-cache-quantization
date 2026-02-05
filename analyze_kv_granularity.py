@@ -122,9 +122,12 @@ def main():
             past = out.past_key_values
             # past_key_values API has churned across transformers versions:
             # older versions -> plain tuple of (key, value) per layer, subscriptable directly.
-            # transformers>=4.48ish -> DynamicCache with .key_cache/.value_cache lists.
-            # some versions additionally expose to_legacy_cache() to convert back to a tuple.
-            if hasattr(past, "key_cache") and hasattr(past, "value_cache"):
+            # ~4.48-5.x -> DynamicCache with .key_cache/.value_cache lists (some also expose
+            #              to_legacy_cache() to convert back to a tuple).
+            # transformers>=5.13 -> DynamicCache.layers[l] is a DynamicLayer with .keys/.values tensors.
+            if hasattr(past, "layers"):
+                get_kv = lambda l: (past.layers[l].keys, past.layers[l].values)
+            elif hasattr(past, "key_cache") and hasattr(past, "value_cache"):
                 get_kv = lambda l: (past.key_cache[l], past.value_cache[l])
             elif hasattr(past, "to_legacy_cache"):
                 legacy = past.to_legacy_cache()
