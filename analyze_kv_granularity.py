@@ -120,6 +120,8 @@ def main():
             inputs = tokenizer(prompt, return_tensors="pt").to(device)
             out = model(**inputs, use_cache=True)
             past = out.past_key_values
+            if hasattr(past, "to_legacy_cache"):
+                past = past.to_legacy_cache()  # DynamicCache (transformers>=4.48) -> tuple of (key, value) per layer
             for l in layer_ids:
                 k, v = past[l]  # [batch=1, num_kv_heads, seq_len, head_dim]
                 per_layer_k[l].append(k[0].transpose(0, 1).cpu())  # -> [seq_len, num_kv_heads, head_dim]
