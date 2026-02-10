@@ -35,6 +35,17 @@ Run on a GPU pod inside the vllm venv:
 import torch
 
 
+def int8_roundtrip_per_channel(x: torch.Tensor) -> torch.Tensor:
+    """Symmetric per-channel INT8 quantize/dequantize simulation.
+
+    x: [num_tokens, num_kv_heads, head_size]; one scale per (head, channel),
+    shared across tokens -- the granularity our calibration analysis picked
+    (kv_granularity_analysis: K outlier ratio is channel-dominated).
+    """
+    scale = x.abs().amax(dim=0, keepdim=True).clamp_min(1e-8) / 127.0
+    return ((x / scale).round().clamp(-128, 127) * scale).to(x.dtype)
+
+
 def paged_attention_pytorch(
     query: torch.Tensor,        # [total_q_tokens, num_q_heads, head_size]
     key_cache: torch.Tensor,    # [num_blocks, block_size, num_kv_heads, head_size]
@@ -43,11 +54,21 @@ def paged_attention_pytorch(
     kv_lens: list[int],
     block_tables: torch.Tensor,  # [num_seqs, max_blocks_per_seq]
     scale: float,
+    kv_quant_mode: str | None = None,  # None = original bf16 path | "int8"
 ) -> torch.Tensor:
     """Reproduces flash_attn_varlen_func(causal=True, block_table=...).
 
     One python-level loop over sequences; everything inside is vectorized.
+
+    kv_quant_mode gates the quantization the same way vLLM's
+    CacheConfig.cache_dtype does ("auto" = untouched model dtype): with the
+    default None this function is the exact bf16 kernel reproduction; with
+    "int8" the gathered K/V go through a per-channel INT8 round-trip,
+    simulating a cache that was stored quantized.
     """
+    if kv_quant_mode not in (None, "int8"):
+        raise ValueError(f"unknown kv_quant_mode: {kv_quant_mode}")
+
     _, block_size, num_kv_heads, head_size = key_cache.shape
     num_q_heads = query.shape[1]
     group_size = num_q_heads // num_kv_heads
@@ -64,6 +85,10 @@ def paged_attention_pytorch(
         # [num_blocks_used, block_size, kv_heads, head_size] -> flat tokens
         k = key_cache[physical_blocks].reshape(-1, num_kv_heads, head_size)[:kv_len]
         v = value_cache[physical_blocks].reshape(-1, num_kv_heads, head_size)[:kv_len]
+
+        if kv_quant_mode == "int8":
+            k = int8_roundtrip_per_channel(k)
+            v = int8_roundtrip_per_channel(v)
 
         # --- GQA: expand kv heads to match q heads ---
         if group_size > 1:
@@ -165,9 +190,20 @@ def verify_against_kernel():
             all_ok = False
         print(f"[{status}] {name}: max abs diff = {max_diff:.2e}")
 
+        # gated-on int8 path: informational divergence vs the bf16 kernel
+        # output (small nonzero error expected -- this is the quantization
+        # loss we are studying, not a correctness failure)
+        ours_int8 = paged_attention_pytorch(
+            query, key_cache, value_cache, query_lens, kv_lens, block_tables,
+            scale, kv_quant_mode="int8",
+        )
+        int8_diff = (kernel_out - ours_int8).abs().max().item()
+        print(f"       int8-gated max abs diff vs kernel = {int8_diff:.2e}")
+
     if not all_ok:
         raise SystemExit(1)
-    print("\nPyTorch reproduction matches flash_attn_varlen_func on all configs.")
+    print("\nPyTorch reproduction matches flash_attn_varlen_func on all configs")
+    print("(kv_quant_mode=None). int8 divergences above are the quant loss.")
 
 
 if __name__ == "__main__":
