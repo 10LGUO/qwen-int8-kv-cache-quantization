@@ -83,6 +83,7 @@ def paged_attention_pytorch(
         num_blocks_used = (kv_len + block_size - 1) // block_size
         physical_blocks = block_tables[seq_idx, :num_blocks_used].long()
         # [num_blocks_used, block_size, kv_heads, head_size] -> flat tokens
+        # [:kv_len] trim because the last blocks may be stale.
         k = key_cache[physical_blocks].reshape(-1, num_kv_heads, head_size)[:kv_len]
         v = value_cache[physical_blocks].reshape(-1, num_kv_heads, head_size)[:kv_len]
 
