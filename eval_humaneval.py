@@ -10,9 +10,16 @@ Usage:
 """
 import argparse
 import json
+import os
 import re
 import subprocess
+import sys
 import tempfile
+
+# The repo root contains the vllm/ submodule checkout, which shadows the
+# installed vllm package when this script's directory lands on sys.path.
+_here = os.path.dirname(os.path.abspath(__file__))
+sys.path = [p for p in sys.path if os.path.abspath(p or os.getcwd()) != _here]
 
 from datasets import load_dataset
 from vllm import LLM, SamplingParams
