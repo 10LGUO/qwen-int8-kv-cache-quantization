@@ -59,7 +59,9 @@ def main():
     ap.add_argument("--limit", type=int, default=164)
     args = ap.parse_args()
 
-    ds = load_dataset("openai_humaneval", split="test").select(range(args.limit))
+    ds = load_dataset("openai/openai_humaneval", split="test").select(
+        range(args.limit)
+    )
 
     llm = LLM(
         model=args.model,
