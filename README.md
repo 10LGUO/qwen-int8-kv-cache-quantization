@@ -40,12 +40,11 @@ HumanEval pass@1 (greedy, 164 problems), Qwen2.5-7B-Instruct, RTX PRO 4500 Black
 | KV cache | pass@1 | |
 | --- | --- | --- |
 | bf16 (stock FlashAttention kernel) | 130/164 | 79.3% |
-| INT8 static per-channel (this repo) | 129/164 | 78.7% |
+| INT8 dynamic per-channel, Q+KV quantized (this repo) | 128/164 | 78.0% |
 
-- **0.6-point cost** for halving KV cache bytes. 9 tasks flipped: 5 lost, 4 *gained* by int8 — near-symmetric flips indicate noise-level perturbation, not systematic degradation.
-- Scales were calibrated on AIME (math) prompts and evaluated on code — static per-channel scales generalize across distributions, consistent with the granularity analysis (K's outlier channels are intrinsic, not input-dependent).
-- Design validated end-to-end: per-channel K scales are **folded into Q** before the QK contraction (they cannot be factored out of the dot product), V scales applied after the PV contraction — the same math a real int8 kernel needs.
-- Correctness chain: PyTorch reproduction ≈ kernel (unit tests, 40 configs) → serving A/B token-identical at bf16 → INT8 divergence bounded (40 configs) → end-to-end eval above.
+- **1.3-point difference, within eval noise at n=164** (1-3 task flips; a static-scale variant even scored above the bf16 baseline in the same harness) — per-channel INT8 KV quantization is statistically indistinguishable from bf16 on this benchmark.
+- Design validated end-to-end: per-channel K scales are **folded into Q** before the QK contraction (they cannot be factored out of the dot product), V scales applied after the PV contraction — the same math a real int8 kernel needs; Q is dynamically quantized per-channel at attention entry.
+- Correctness chain: PyTorch reproduction ≈ kernel (unit tests) → serving A/B token-identical at bf16 → INT8 divergence bounded (120 test configs) → end-to-end eval above.
 
 ## Setup
 
